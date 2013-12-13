@@ -1,5 +1,4 @@
-import com.viadeo.data.main.Macros
-import com.viadeo.data.model.NetworkPhotoNews
+import es.imediava.cl.async.Macros
 
 object Test extends App {
 
@@ -16,11 +15,11 @@ object Test extends App {
 
   val a = Macros.hello({f(b + 1, c + 2)})
 
-  import scala.reflect.runtime.{universe => ru}
-
-  val runtimeMirror = ru.runtimeMirror(getClass().getClassLoader())
-
-  class C { def x = 2 }
-
-  val im = runtimeMirror.reflect(new C)
+//  import scala.reflect.runtime.{universe => ru}
+//
+//  val runtimeMirror = ru.runtimeMirror(getClass().getClassLoader())
+//
+//  class C { def x = 2 }
+//
+//  val im = runtimeMirror.reflect(new C)
 }
