@@ -1,4 +1,4 @@
-import sbt._
+import sbt._ 
 import Keys._
 
 object BuildSettings {
@@ -14,6 +14,12 @@ object BuildSettings {
 object MyBuild extends Build {
   import BuildSettings._
 
+  def excludeM6Modules(m: ModuleID) = (m
+    exclude("org.scala-lang.modules", "scala-parser-combinators_2.11.0-M6")
+    exclude("org.scala-lang.modules", "scala-xml_2.11.0-M6")
+  )
+
+  // include these settings in your project:
   lazy val root: Project = Project(
     "root",
     file("."),
@@ -25,18 +31,21 @@ object MyBuild extends Build {
     "macros",
     file("macros"),
     settings = buildSettings ++ Seq(
-      libraryDependencies <+= (scalaVersion)("org.scala-lang" % "scala-reflect" % _),
+      libraryDependencies += excludeM6Modules("org.scala-lang" % "scala-compiler" % scalaVersion.value),
+      libraryDependencies += "org.scala-lang.modules" %% "scala-xml" % "1.0.0-RC7",
+      libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.0.0-RC5",
+      libraryDependencies += excludeM6Modules("org.scala-lang" % "scala-reflect" % scalaVersion.value), 
       libraryDependencies ++= Seq(
         "org.apache.avro" % "avro" % "1.7.3",
         "org.specs2" % "specs2_2.11.0-M7" % "2.3.6" % "test"
       )
 
-    )
+    ) ++ net.virtualvoid.sbt.graph.Plugin.graphSettings
   )
 
   lazy val core: Project = Project(
     "core",
     file("core"),
-    settings = buildSettings
+    settings = buildSettings ++ net.virtualvoid.sbt.graph.Plugin.graphSettings
   ) dependsOn(macros)
 }
