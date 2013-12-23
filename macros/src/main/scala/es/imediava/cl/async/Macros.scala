@@ -5,6 +5,7 @@ import language.experimental.macros
 import scala.reflect.macros.BlackboxContext
 import scala.reflect.macros.BlackboxMacro
 import scala.concurrent.Future
+import scala.reflect.internal.Trees.Apply
 
 trait Impl extends BlackboxMacro {
 
@@ -37,10 +38,14 @@ trait Impl extends BlackboxMacro {
       }
     }
     b match {
-      case q"$f($subArg)" =>
+      case q"$f(..$subArgs)" if subArgs.length > 0 =>
         val functName = TermName(nameGenerator("function"))
-        val paramName = TermName(nameGenerator("param"))
-        flattenSubElem(subArg, paramName) ++ flattenSubElem(f, functName) ++ List(q"$functName(${paramName})")
+        val flattenedArgs = subArgs.map{ subArg =>
+          val paramName = TermName(nameGenerator("param"))
+          (paramName, flattenSubElem(subArg, paramName))
+        }
+        val paramNames = flattenedArgs.map(_._1)
+        flattenedArgs.map(_._2).flatten ++ flattenSubElem(f, functName) ++ List(Apply(q"$functName", paramNames.map(p => q"$p")))
       case otherwise : Tree => List(otherwise)
     }
 
