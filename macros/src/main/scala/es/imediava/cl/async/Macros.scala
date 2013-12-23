@@ -19,19 +19,28 @@ trait Impl extends BlackboxMacro {
     q"{..$stats}"
   }
 
-  def flatten(b : c.Tree) : List[c.Tree] = {
-    import c.universe._
+  val nameGenerator = {
+    var count = 0
+    (prefix: String) => {
+      count = count + 1
+      s"$prefix$$$count"
+    }
+  }
 
-    println(showRaw(b))
+  def flatten(b : Tree) : List[Tree] = {
+    //import c.universe._
+    def flattenSubElem(subElem: Tree, paramName: TermName) = {
+      val flattenedSubArg = q"{..${flatten(subElem)}}"
+      flattenedSubArg match {
+        case Block(stats, expr) => stats ++ (q"val $paramName: ${flattenedSubArg.tpe} = ${expr}" :: Nil)
+        case otherwise => q"val $paramName: ${flattenedSubArg.tpe} = ${otherwise}" :: Nil
+      }
+    }
     b match {
       case q"$f($subArg)" =>
-        val paramName = TermName("param1$1")
-        val flattenedSubArg = q"{..${flatten(subArg)}}"
-        flattenedSubArg match {
-          case Block(stats, expr) => stats ++ (q"val $paramName: ${flattenedSubArg.tpe} = ${expr}" :: List(q"$f($paramName)"))
-          case otherwise => q"val $paramName: ${flattenedSubArg.tpe} = ${otherwise}" :: List(q"$f($paramName)")
-        }
-
+        val functName = TermName(nameGenerator("function"))
+        val paramName = TermName(nameGenerator("param"))
+        flattenSubElem(subArg, paramName) ++ flattenSubElem(f, functName) ++ List(q"$functName(${paramName})")
       case otherwise : Tree => List(otherwise)
     }
 
@@ -58,34 +67,7 @@ trait Impl extends BlackboxMacro {
      * @param app
      * @return
      */
-    def flatten(app: Tree) = {
 
-      val myNameGenerator = {
-        var count = 0
-        ()  => {
-          count = count + 1
-          s"param\$$count"
-        }
-      }
-
-
-      def flatten(b : Tree) = {
-        b match {
-          case q"$f($subArg)" =>
-            val paramName = TermName("param1$1")
-            "val $paramName: ${subArg.tpe} = $subArg" :: List(q"$f($paramName)")
-          case otherwise => otherwise
-        }
-
-      }
-      /*def flattenArg(arg: Tree) : Block = {
-        arg match {
-          case q"$f($subArg)" =>
-            val flattenSubArg = flattenArg(arg)
-            q"val ${TermName(myNameGenerator())}: ${arg.tpe} = ${}"
-          case otherwise : Tree => q"val ${TermName(myNameGenerator())}: ${otherwise.tpe} = $otherwise"
-        }
-      } */
 
       /*app match {
         case Apply(fun, args) =>
