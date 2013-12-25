@@ -1,0 +1,22 @@
+
+expr match 
+case { val myvar = await(tal) }
+  
+  stateBlock = {
+    // nextJumpState = 
+    nextStateJump = nextJumpState.getOrElse(nextState)
+
+  }
+
+case { if (cond) { thenBlock } { elseBlock } } if expr has stats // or labelDefJmp but I don't know what it is
+
+   // Since the expression has been normalized there cannot be an await in the cond
+   // So this returns a if branch without await for the condition that points
+   // to the states of the thenBlock and the elseBlock
+
+   // The then and else blocks are made nested blocks (they need to be converted)
+
+
+===== How to insert the cases for the resume and the apply on the template ====
+
+

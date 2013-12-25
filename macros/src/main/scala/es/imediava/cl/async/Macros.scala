@@ -2,18 +2,12 @@ package es.imediava.cl.async
 
 import language.experimental.macros
 
-import scala.reflect.macros.BlackboxContext
 import scala.reflect.macros.BlackboxMacro
 import scala.concurrent.Future
-import scala.reflect.internal.Trees.Apply
 
-trait Impl extends BlackboxMacro {
+trait FlattenFunctionCalls extends BlackboxMacro {
 
-  //Apply(
-  //  Apply(
-  //    Select(Select(Select(Select(Select(Select(Select(Ident($line71.$read), TermName("$iw")), TermName("$iw")), TermName("$iw")), TermName("$iw")), TermName("$iw")), TermName("$iw")), TermName("plus")),
-  //      List(Apply(Select(Ident(TermName("a")), TermName("$plus")), List(Literal(Constant(2)))))),
-  //  List(Apply(Select(Ident(TermName("b")), TermName("$plus")), List(Literal(Constant(2))))))
+  import c.universe._
 
   def listToBlock(stats: List[c.Tree]) : c.Tree = {
     import c.universe._
@@ -28,119 +22,59 @@ trait Impl extends BlackboxMacro {
     }
   }
 
-  def flatten(b : Tree) : List[Tree] = {
-    //import c.universe._
-    def flattenSubElem(subElem: Tree, paramName: TermName) = {
-      val flattenedSubArg = q"{..${flatten(subElem)}}"
-      flattenedSubArg match {
-        case Block(stats, expr) => stats ++ (q"val $paramName: ${flattenedSubArg.tpe} = ${expr}" :: Nil)
-        case otherwise => q"val $paramName: ${flattenedSubArg.tpe} = ${otherwise}" :: Nil
-      }
+  def flattenSubElem(subElem: c.Tree, paramName: TermName) = {
+    val flattenedSubArg = q"{..${flatten(subElem)}}"
+    flattenedSubArg match {
+      case Block(stats, expr) => stats ++ (q"val $paramName: ${flattenedSubArg.tpe} = ${expr}" :: Nil)
+      case otherwise => q"val $paramName: ${flattenedSubArg.tpe} = ${otherwise}" :: Nil
     }
+  }
+
+  /**
+   * Takes the current tree that represents an application
+   * and return a tree that has a flattened version of the application.
+   *
+   * e.g.
+   * { sum(a + (1 + 2), b + 2) }
+   *
+   * is converted to
+   *
+   * { val param1$1 = 1 + 2
+   *   val param1$2 = a + param1$1
+   *   val param2$1 = b + 2
+   *   sum(param1$2, param2$1) }
+   *
+   * @param b Entry tree
+   * @return
+   */
+  def flatten(b : c.Tree) : List[c.Tree] = {
+    //import c.universe._
     b match {
       case q"$f(..$subArgs)" if subArgs.length > 0 =>
         val functName = TermName(nameGenerator("function"))
         val flattenedArgs = subArgs.map{ subArg =>
           val paramName = TermName(nameGenerator("param"))
-          (paramName, flattenSubElem(subArg, paramName))
+          (q"$paramName", flattenSubElem(subArg, paramName))
         }
         val paramNames = flattenedArgs.map(_._1)
-        flattenedArgs.map(_._2).flatten ++ flattenSubElem(f, functName) ++ List(Apply(q"$functName", paramNames.map(p => q"$p")))
+        flattenedArgs.map(_._2).flatten ++ flattenSubElem(f, functName) ++ List(q"$functName(..$paramNames)")
       case otherwise : Tree => List(otherwise)
     }
 
   }
 
-  def hello(param1: c.Expr[Unit]): c.Expr[Unit] = {
-    import c.universe._
-
-    /**
-     * Takes the current tree that represents an application
-     * and return a tree that has a flattened version of the application.
-     *
-     * e.g.
-     * { sum(a + (1 + 2), b + 2) }
-     *
-     * is converted to
-     *
-     * { val param1$1 = 1 + 2
-     *   val param1$2 = a + param1$1
-     *   val param2$1 = b + 2
-     *   sum(param1$2, param2$1) }
-     *
-     * @param globalTree
-     * @param app
-     * @return
-     */
+  def unit(param1: c.Expr[Unit]) = { reify { () } }
 
 
-      /*app match {
-        case Apply(fun, args) =>
-          val newTree = flatten(fun)
-          args.map {
-            case (tree, complexArg @ q"$f(..$args2)") =>
-              val name = TermName(arg.toString + "1")
-              val newVal = q"val $name: ${fun.tpe} = ${flatten(complexArg)}"
-              //tree +:
-          }
-        case (tree, otherwise) => tree
-
-      }*/
-    }
-
-    param1.tree match {
-      case Block(stats, last) =>
-
-        //stats.foreach(x => println(showRaw(x)))
-        //println(showRaw(last))
-        last match {
-          case q"$func[..$tpe](..$bar2)" =>
-            //bar2.foreach(x => println(showRaw(x)))
-            //bar2.map{
-              //flatten(param1.tree, _)
-            //}
-
-        }
-        stats.map {
-            case q"$func[..$tpe](..$bar2)" =>
-              bar2.map{
-                case q"$f(..$bar3)" =>
-                    //println(s"Bar3:$bar3")
-              }
-            /*case q"$mods val $name: $tpe = $rhs" =>
-              println(s"Rhs=$rhs")
-              rhs match {
-                case q"await(..$bar2)" =>
-                  // I need to lift bar2 => bar2 = f(a + 2, b + 2)
-                  // I need to add two vars :
-                  // aParam1 = a + 2
-                  // aParam2 = b + 2
-                  // and replace the call f(a+2, b+2)
-                  // by f(aParam1, aParam2)
-                  bar2.map{ x =>
-                    x match {
-                      case q"$f(..$bar3)" =>
-                        println(s"Bar3:$bar3")
-                    }
-                  }*/
-
-
-
-            case _ => Unit
-        }
-
-        reify { Unit }
-      case _ =>
-        reify { Unit }
-    }
-  }
 }
 
 object Macros {
 
-  def hello(param1: Unit): Unit = macro Impl.hello
+  def hello(param1: Unit): Unit = macro FlattenFunctionCalls.unit
 
-  def await[T](f: Future[T]) = ???
+  def await[T](f: Future[T]) : T = ???
+
+  def async[T](value: T) : Future[T] = ???
 
   /*
    * val x = 1

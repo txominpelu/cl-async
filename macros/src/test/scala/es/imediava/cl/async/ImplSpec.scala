@@ -23,47 +23,20 @@ class ImplSpec extends Specification {
 
   "Impl" should {
 
-    "flatten expression in function calls" in {
+    "deal with await on valDef" in {
 
       import scala.reflect.runtime.{universe => u}
       import Macros._
 
-      val initial = u reify {
-        {
-          def sum(a: Int, b: Int) = a + b
-          val b = 2
-          val c = 3
-          val a = sum(b + 1, c + 2)
-        }
+      val result = async {
+        val a = async { true }
+        val b = async { false }
+        await(a) && await(b)
       }
-
-      println("initial")
-
-      println(u showRaw initial.tree)
-      println("")
-
-      val expected = u reify {
-        {
-          def sum(a: Int, b: Int) = a + b
-          val b = 2
-          val c = 3
-          val aParam1 = b + 1
-          val aParam2 = c + 2
-          val a = sum(aParam1, aParam2)
-        }
-      }
-
-      hello(
-        {
-          def sum(a: Int, b: Int) = a + b
-          val b = 2
-          val c = 3
-          val a = sum(b + 1, c + 2)
-          Macros.await(Future {sum(b+1, c+2)} )
-        }
-      )
-      ok
+      result mustEqual(false)
     }
+
+
 
   }
 

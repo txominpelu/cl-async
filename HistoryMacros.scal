@@ -1,0 +1,54 @@
+
+import scala.reflect.runtime._
+import scala.reflect.runtime.universe._
+import es.imediava.cl.async.Macros._
+
+def plusone(a: Int) = a + 1
+def plus(increment : Int)(num: Int) = num + increment
+def sumfunc(inc: Int)(s1: Int, s2: Int) = inc + s1 + s2
+
+//flatten
+//listToBlock(flatten(res40.expr))
+
+
+def parse(mytext: String) = {
+  import scala.tools.reflect.ToolBox
+  val cm = universe.runtimeMirror(getClass.getClassLoader)
+  val tb = cm.mkToolBox()
+  tb.parse(mytext)
+}
+
+def listToBlock(stats: List[Tree]) : Tree = {
+  q"{..$stats}"
+}
+
+val nameGenerator = {
+  var count = 0
+  (prefix: String) => { 
+    count = count + 1
+    s"$prefix$$$count"
+  }
+}
+
+
+val nextState = { 
+  var count = 0
+  (prefix: String) => {
+    count = count + 1
+    count
+  }
+}
+
+reify { 
+  val myfuture = async {
+    val a = async { true }
+    val b = await(a)
+    b
+  }
+}
+
+// async (value) = Future { value }(context)
+// async (block) = 
+
+//res1.tree.asInstanceOf[Block]
+
