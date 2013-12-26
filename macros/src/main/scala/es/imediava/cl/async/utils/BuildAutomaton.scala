@@ -1,4 +1,4 @@
-package es.imediava.cl.async
+package es.imediava.cl.async.utils
 
 /**
  * Created by zenexity on 24/12/13.
@@ -15,11 +15,13 @@ object BuildAutomaton {
     }
   }
 
+  val resumeName = TermName("resume$$async")
+
   def stateMachineSkeleton() = {
     q"""class MyStateMachine extends AnyRef {
        var state$$async: Int = 0;
        var result$$async: scala.concurrent.Promise[Int] = scala.concurrent.Promise.apply[Int]();
-       def resume$$async(): Unit = try {
+       def $resumeName : Unit = try {
             state$$async match {
               case _ => ()
             }
@@ -47,9 +49,10 @@ object BuildAutomaton {
     q"class $name extends $extend { ..${ varDef :: body } }"
   }
 
-  def addMethodToResume(clazz: ClassDef) = {
-    val q"class $name extends $extend { ..$body }" = clazz
-    q"class $name extends $extend { ..${ varDef :: body } }"
+  case class CaseResume(state: Int, body: Tree)
+
+  def addMethodToResume(clazz: ClassDef, defDef: DefDef) = {
+
   }
 
   def isAwait(func: Tree) = {

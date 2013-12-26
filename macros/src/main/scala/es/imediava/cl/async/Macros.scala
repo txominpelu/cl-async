@@ -3,7 +3,8 @@ package es.imediava.cl.async
 import language.experimental.macros
 
 import scala.reflect.macros.BlackboxMacro
-import scala.concurrent.Future
+import scala.concurrent.{Await, Future}
+import scala.concurrent.duration.{Duration, DurationInt}
 
 trait FlattenFunctionCalls extends BlackboxMacro {
 
@@ -68,13 +69,29 @@ trait FlattenFunctionCalls extends BlackboxMacro {
 
 }
 
+trait AsyncMacro extends BlackboxMacro {
+
+  import c.universe._
+
+  def asyncImpl(value: c.Expr[Boolean]) : c.Expr[Future[Boolean]] = {
+    value.tree match {
+      case q"true" => c.Expr(q"Future { true } (scala.concurrent.ExecutionContext.global)")
+      case q"false" => c.Expr(q"Future { false } (scala.concurrent.ExecutionContext.global)")
+      case otherwise => c.Expr(q"Future { $otherwise } (scala.concurrent.ExecutionContext.global)")
+    }
+  }
+
+  def awaitImpl(f: c.Expr[Future[Boolean]]) : c.Expr[Boolean] = {
+    c.Expr(q"scala.concurrent.Await.ready[Boolean](${f.tree}, scala.concurrent.duration.DurationInt(5).seconds).value.get.get")
+  }
+
+}
+
 object Macros {
 
-  def hello(param1: Unit): Unit = macro FlattenFunctionCalls.unit
+  def await(f: Future[Boolean]) : Boolean = macro AsyncMacro.awaitImpl
 
-  def await[T](f: Future[T]) : T = ???
-
-  def async[T](value: T) : Future[T] = ???
+  def async(value: Boolean) : Future[Boolean] = macro AsyncMacro.asyncImpl
 
   /*
    * val x = 1

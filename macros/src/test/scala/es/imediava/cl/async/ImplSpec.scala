@@ -31,9 +31,9 @@ class ImplSpec extends Specification {
       val result = async {
         val a = async { true }
         val b = async { false }
-        await(a) && await(b)
+        Macros.await(a)
       }
-      result mustEqual(false)
+      result.value.get.get mustEqual(true)
     }
 
 
