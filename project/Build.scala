@@ -33,6 +33,7 @@ object MyBuild extends Build {
     settings = buildSettings ++ Seq(
       libraryDependencies += excludeM6Modules("org.scala-lang" % "scala-compiler" % scalaVersion.value),
       libraryDependencies += "org.scala-lang.modules" %% "scala-xml" % "1.0.0-RC7",
+      libraryDependencies += "org.scala-lang" % "scala-compiler" % scalaVersion.value % "provided",
       libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.0.0-RC5",
       libraryDependencies += excludeM6Modules("org.scala-lang" % "scala-reflect" % scalaVersion.value), 
       libraryDependencies ++= Seq(

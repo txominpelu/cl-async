@@ -3,8 +3,16 @@ package es.imediava.cl.async
 import language.experimental.macros
 
 import scala.reflect.macros.BlackboxMacro
+import scala.reflect.macros.BlackboxContext
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.{Duration, DurationInt}
+import es.imediava.cl.async.utils.BuildAutomaton
+import scala.util.Success
+
+import scala.tools.nsc.Global
+import scala.tools.nsc.transform.TypingTransformers
+import scala.annotation.compileTimeOnly
+
 
 trait FlattenFunctionCalls extends BlackboxMacro {
 
@@ -13,6 +21,11 @@ trait FlattenFunctionCalls extends BlackboxMacro {
   def listToBlock(stats: List[c.Tree]) : c.Tree = {
     import c.universe._
     q"{..$stats}"
+  }
+
+  def blockToList(tree: c.Tree): List[c.Tree] = tree match {
+    case Block(stats, expr) => stats :+ expr
+    case t                  => t :: Nil
   }
 
   val nameGenerator = {
@@ -69,27 +82,94 @@ trait FlattenFunctionCalls extends BlackboxMacro {
 
 }
 
-trait AsyncMacro extends BlackboxMacro {
+trait AsyncMacro extends BlackboxMacro with TypingTransformers {
 
   import c.universe._
+  import definitions._
+
+  import language.reflectiveCalls
+  val powerContext = c.asInstanceOf[c.type { val universe: Global; val callsiteTyper: universe.analyzer.Typer }]
+
+  val global: powerContext.universe.type   = powerContext.universe
+  val callSiteTyper: global.analyzer.Typer = powerContext.callsiteTyper
+  val macroApplication: global.Tree        = c.macroApplication.asInstanceOf[global.Tree]
+
+  lazy val macroPos = macroApplication.pos.makeTransparent
+  def atMacroPos(t: global.Tree) = global.atPos(macroPos)(t)
+
+  def listToBlock(stats: List[c.Tree]) : c.Tree = {
+    import c.universe._
+    q"{..$stats}"
+  }
+
+  def blockToList(tree: c.Tree): List[c.Tree] = tree match {
+    case Block(stats, expr) => stats :+ expr
+    case t                  => t :: Nil
+  }
 
   def asyncImpl(value: c.Expr[Boolean]) : c.Expr[Future[Boolean]] = {
-    value.tree match {
-      case q"true" => c.Expr(q"Future { true } (scala.concurrent.ExecutionContext.global)")
-      case q"false" => c.Expr(q"Future { false } (scala.concurrent.ExecutionContext.global)")
-      case otherwise => c.Expr(q"Future { $otherwise } (scala.concurrent.ExecutionContext.global)")
+    //ValDef(Modifiers(), TermName("a2"), TypeTree().setOriginal(Select(Ident(scala), scala.Boolean)), Apply(Select(Ident(es.imediava.cl.async.Macros), TermName("await")), List(Ident(TermName("f1"))))))
+    stateMachineSkeleton()
+  }
+
+  def stateMachineSkeleton() = {
+    val tree = reify {
+      class MyStateMachine extends AnyRef {
+        var f1 = Future.failed{ new java.lang.RuntimeException("future that failed") }
+        var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
+        def resume$async : Unit = try {
+          f1.onComplete(apply _)(scala.concurrent.ExecutionContext.global)
+        } catch {
+          case scala.util.control.NonFatal((tr @ _)) => {
+            {
+              result$async.complete(scala.util.Failure.apply(tr));
+              ()
+            };
+            ()
+          }
+        };
+
+        def apply(result : scala.util.Try[Boolean]): Unit = {
+          result$async.complete(result)
+        }
+      }
+      val myVar = new MyStateMachine()
+      myVar.resume$async
+      myVar.result$async.future
+    }
+    tree
+
+  }
+
+  def applyOnComplete() : Expr[Unit] = {
+    val result = q"result$$async"
+    val tr = q"tr"
+    reify {
+        val state = 0
+        state match {
+          case 0 =>
+            if (c.Expr[scala.util.Try[Boolean]](tr).splice.isFailure)
+            {
+              c.Expr[scala.concurrent.Promise[Boolean]](result).splice.complete(tr.asInstanceOf[scala.util.Try[Boolean]]);
+              ()
+            }
+            else
+            {
+              c.Expr[scala.concurrent.Promise[Boolean]](result).splice.complete(tr.asInstanceOf[scala.util.Try[Boolean]]);
+            };
+            ()
+        }
+
     }
   }
 
-  def awaitImpl(f: c.Expr[Future[Boolean]]) : c.Expr[Boolean] = {
-    c.Expr(q"scala.concurrent.Await.ready[Boolean](${f.tree}, scala.concurrent.duration.DurationInt(5).seconds).value.get.get")
-  }
 
 }
 
 object Macros {
 
-  def await(f: Future[Boolean]) : Boolean = macro AsyncMacro.awaitImpl
+  @compileTimeOnly("`await` must be enclosed in an `async` block")
+  def await(f: Future[Boolean]) : Boolean = ???
 
   def async(value: Boolean) : Future[Boolean] = macro AsyncMacro.asyncImpl
 

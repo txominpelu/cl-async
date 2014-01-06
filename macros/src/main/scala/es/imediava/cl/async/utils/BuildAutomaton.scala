@@ -1,11 +1,15 @@
 package es.imediava.cl.async.utils
 
+import scala.util.Success
+import scala.reflect.macros.BlackboxMacro
+import scala.concurrent.{Future, Promise}
+
 /**
  * Created by zenexity on 24/12/13.
  */
-object BuildAutomaton {
+trait BuildAutomaton extends BlackboxMacro {
 
-  import scala.reflect.runtime.universe._
+  import c.universe._
 
   val nextState = {
     var count = 0
@@ -17,43 +21,42 @@ object BuildAutomaton {
 
   val resumeName = TermName("resume$$async")
 
-  def stateMachineSkeleton() = {
-    q"""class MyStateMachine extends AnyRef {
-       var state$$async: Int = 0;
-       var result$$async: scala.concurrent.Promise[Int] = scala.concurrent.Promise.apply[Int]();
-       def $resumeName : Unit = try {
-            state$$async match {
-              case _ => ()
-            }
-          } catch {
-            case scala.util.control.NonFatal((tr @ _)) => {
-              {
-                result$$async.complete(scala.util.Failure.apply(tr));
-                ()
-              };
-              ()
-            }
-          };
-
-       def apply(tr: scala.util.Try[Any]): Unit = state$$async match {
-            case _ => ()
-       }
-       def apply: Unit = resume$$async()
-    }
-     """
-
-  }
-
   def addVariable(clazz: ClassDef, varDef: ValDef) = {
     val q"class $name extends $extend { ..$body }" = clazz
     q"class $name extends $extend { ..${ varDef :: body } }"
   }
 
+  /*def stateMachineSkeleton() = {
+    val tree = reify {
+      class MyStateMachine extends AnyRef {
+        var f1 = Future.failed{ new RuntimeException("future that failed") }
+        var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
+        def resume$async : Unit = try {
+          f1.onComplete(apply _)
+        } catch {
+          case scala.util.control.NonFatal((tr @ _)) => {
+            {
+              result$async.complete(scala.util.Failure.apply(tr));
+              ()
+            };
+            ()
+          }
+        };
+
+
+        def apply(result : scala.util.Try[Boolean]): Unit = {
+          result$async.complete(result)
+        }
+      }
+      val myVar = new MyStateMachine()
+      myVar.resume$async
+      myVar.result$async.future
+    }
+    tree
+
+  } */
+
   case class CaseResume(state: Int, body: Tree)
-
-  def addMethodToResume(clazz: ClassDef, defDef: DefDef) = {
-
-  }
 
   def isAwait(func: Tree) = {
     func match {

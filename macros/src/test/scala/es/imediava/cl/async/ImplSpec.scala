@@ -3,7 +3,8 @@ package es.imediava.cl.async
 import org.specs2.mutable.Specification
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
+import scala.util.{Failure, Try}
+import scala.concurrent.{Future, Await}
 
 class ImplSpec extends Specification {
 
@@ -23,17 +24,23 @@ class ImplSpec extends Specification {
 
   "Impl" should {
 
-    "deal with await on valDef" in {
 
-      import scala.reflect.runtime.{universe => u}
+
+    "deal with future that fails " in {
+      val myException = new RuntimeException("future that failed")
+
       import Macros._
 
-      val result = async {
-        val a = async { true }
-        val b = async { false }
-        Macros.await(a)
+      val result : Future[Boolean] = async {
+        val f1 : Future[Boolean] = Future.failed{ new RuntimeException("future that failed") }
+        val a2 : Boolean = Macros.await(f1)
+        a2
       }
-      result.value.get.get mustEqual(true)
+      //scala.concurrent.Await.ready[Boolean](scala.concurrent.Future.apply[Boolean](true)(scala.concurrent.ExecutionContext.global), scala.concurrent.duration.DurationInt(5).seconds)
+      result.isCompleted must_==(true)
+      result.value must like {
+        case Some(Failure(ex: RuntimeException)) if ex.getMessage() == "future that failed" => ok
+      }
     }
 
 
