@@ -4,7 +4,7 @@ import language.experimental.macros
 
 import scala.reflect.macros.BlackboxMacro
 import scala.reflect.macros.BlackboxContext
-import scala.concurrent.{Await, Future}
+import scala.concurrent.{Promise, Await, Future}
 import scala.concurrent.duration.{Duration, DurationInt}
 import es.imediava.cl.async.utils.BuildAutomaton
 import scala.util.Success
@@ -12,6 +12,7 @@ import scala.util.Success
 import scala.tools.nsc.Global
 import scala.tools.nsc.transform.TypingTransformers
 import scala.annotation.compileTimeOnly
+import scala.reflect.internal.Trees
 
 
 trait FlattenFunctionCalls extends BlackboxMacro {
@@ -81,64 +82,93 @@ trait FlattenFunctionCalls extends BlackboxMacro {
 
 
 }
+object AsyncMacro {
+  def apply(c: BlackboxContext): AsyncMacro = {
+    import language.reflectiveCalls
+    val powerContext = c.asInstanceOf[c.type { val universe: Global; val callsiteTyper: universe.analyzer.Typer }]
+    new AsyncMacro {
+      val global: powerContext.universe.type   = powerContext.universe
+      val callSiteTyper: global.analyzer.Typer = powerContext.callsiteTyper
+      val macroApplication: global.Tree        = c.macroApplication.asInstanceOf[global.Tree]
+    }
+  }
+}
 
-trait AsyncMacro extends BlackboxMacro with TypingTransformers {
+private[async] trait AsyncMacro
+  extends TypingTransformers {
 
-  import c.universe._
-  import definitions._
-
-  import language.reflectiveCalls
-  val powerContext = c.asInstanceOf[c.type { val universe: Global; val callsiteTyper: universe.analyzer.Typer }]
-
-  val global: powerContext.universe.type   = powerContext.universe
-  val callSiteTyper: global.analyzer.Typer = powerContext.callsiteTyper
-  val macroApplication: global.Tree        = c.macroApplication.asInstanceOf[global.Tree]
+  val global: Global
+  val callSiteTyper: global.analyzer.Typer
+  val macroApplication: global.Tree
 
   lazy val macroPos = macroApplication.pos.makeTransparent
   def atMacroPos(t: global.Tree) = global.atPos(macroPos)(t)
 
-  def listToBlock(stats: List[c.Tree]) : c.Tree = {
-    import c.universe._
+}
+
+trait AsyncMacroInigo extends BlackboxMacro {
+
+
+
+  val asyncMacro = AsyncMacro(c)
+
+  val universe: reflect.internal.SymbolTable = asyncMacro.global
+
+  import universe._
+
+  def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = universe.Expr[T](rootMirror, universe.FixedMirrorTreeCreator(rootMirror, tree))
+
+  case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
+    def stateMachineMember(name: TermName): Symbol =
+      stateMachineClass.info.member(name)
+    def memberRef(name: TermName): Tree =
+      gen.mkAttributedRef(stateMachineMember(name))
+  }
+
+  def listToBlock(stats: List[Tree]) : Tree = {
     q"{..$stats}"
   }
 
-  def blockToList(tree: c.Tree): List[c.Tree] = tree match {
+  def blockToList(tree: Tree): List[Tree] = tree match {
     case Block(stats, expr) => stats :+ expr
     case t                  => t :: Nil
   }
 
+  def isAwait(tree: Tree) = {
+    tree match {
+      // FIXME: find a way to identify our await uniquely (async uses a global tree)
+      case Apply(Select(Ident(TermName(t1)), TermName(name)), _) if name == "await" => true
+      case _ => false
+    }
+  }
   def asyncImpl(value: c.Expr[Boolean]) : c.Expr[Future[Boolean]] = {
-    //ValDef(Modifiers(), TermName("a2"), TypeTree().setOriginal(Select(Ident(scala), scala.Boolean)), Apply(Select(Ident(es.imediava.cl.async.Macros), TermName("await")), List(Ident(TermName("f1"))))))
-    stateMachineSkeleton()
+    val notAwaitValDefs = blockToList(value.tree.asInstanceOf[Tree]).collect{
+      case valDef @ ValDef(_, name, _ , call @ Apply(method, param1 :: Nil)) if !isAwait(call) => valDef
+    }
+    val awaitCall = blockToList(value.tree.asInstanceOf[Tree]).collectFirst{
+      case call @ Apply(method, param1 :: Nil) if isAwait(call) => stateMachineSkeleton(notAwaitValDefs, param1)
+    }
+    awaitCall.get.asInstanceOf[c.Expr[Future[Boolean]]]
   }
 
-  def stateMachineSkeleton() = {
+  def stateMachineSkeleton(valDefs: List[ValDef], awaitExpr: Tree) = {
+    // name, value
+    val tal = valDefs.head
+    //val cleanedAwaitExpr = univers.resetAllAttrs(awaitExpr)
+    //val newTal = universe.resetLocalAttrs(tal)
+
     val tree = reify {
       class MyStateMachine extends AnyRef {
-        var f1 = Future.failed{ new java.lang.RuntimeException("future that failed") }
+        Expr[Unit](tal).splice
+        var f2 = Expr[Future[Boolean]](awaitExpr).splice
         var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
-        def resume$async : Unit = try {
-          f1.onComplete(apply _)(scala.concurrent.ExecutionContext.global)
-        } catch {
-          case scala.util.control.NonFatal((tr @ _)) => {
-            {
-              result$async.complete(scala.util.Failure.apply(tr));
-              ()
-            };
-            ()
-          }
-        };
+        def resume$async : Unit = Unit
 
         def apply(result : scala.util.Try[Boolean]): Unit = {
-          result$async.complete(result)
         }
       }
-      val myVar = new MyStateMachine()
-      myVar.resume$async
-      myVar.result$async.future
     }
     tree
-
   }
 
   def applyOnComplete() : Expr[Unit] = {
@@ -148,14 +178,14 @@ trait AsyncMacro extends BlackboxMacro with TypingTransformers {
         val state = 0
         state match {
           case 0 =>
-            if (c.Expr[scala.util.Try[Boolean]](tr).splice.isFailure)
+            if (Expr[scala.util.Try[Boolean]](tr).splice.isFailure)
             {
-              c.Expr[scala.concurrent.Promise[Boolean]](result).splice.complete(tr.asInstanceOf[scala.util.Try[Boolean]]);
+              Expr[scala.concurrent.Promise[Boolean]](result).splice.complete(tr.asInstanceOf[scala.util.Try[Boolean]]);
               ()
             }
             else
             {
-              c.Expr[scala.concurrent.Promise[Boolean]](result).splice.complete(tr.asInstanceOf[scala.util.Try[Boolean]]);
+              Expr[scala.concurrent.Promise[Boolean]](result).splice.complete(tr.asInstanceOf[scala.util.Try[Boolean]]);
             };
             ()
         }
@@ -171,7 +201,7 @@ object Macros {
   @compileTimeOnly("`await` must be enclosed in an `async` block")
   def await(f: Future[Boolean]) : Boolean = ???
 
-  def async(value: Boolean) : Future[Boolean] = macro AsyncMacro.asyncImpl
+  def async(value: Boolean) : Future[Boolean] = macro AsyncMacroInigo.asyncImpl
 
   /*
    * val x = 1
