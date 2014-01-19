@@ -118,7 +118,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
   def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = universe.Expr[T](rootMirror, universe.FixedMirrorTreeCreator(rootMirror, tree))
 
-  case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
+  case class SymLookup(stateMachineClass: Symbol) {
     def stateMachineMember(name: TermName): Symbol =
       stateMachineClass.info.member(name)
     def memberRef(name: TermName): Tree =
@@ -146,25 +146,60 @@ trait AsyncMacroInigo extends BlackboxMacro {
       case valDef @ ValDef(_, name, _ , call @ Apply(method, param1 :: Nil)) if !isAwait(call) => valDef
     }
     val awaitCall = blockToList(value.tree.asInstanceOf[Tree]).collectFirst{
-      case call @ Apply(method, param1 :: Nil) if isAwait(call) => stateMachineSkeleton(notAwaitValDefs, param1)
+      case call @ Apply(method, param1 :: Nil) if isAwait(call) => stateMachineSkeleton()
     }
+
+    val stateMachine = stateMachineSkeleton()
+    val sLookup = SymLookup(stateMachine.tree.symbol)
+    val resultMember = sLookup.memberRef(TermName("result$async"))
+
     awaitCall.get.asInstanceOf[c.Expr[Future[Boolean]]]
   }
 
-  def stateMachineSkeleton(valDefs: List[ValDef], awaitExpr: Tree) = {
-    // name, value
-    val tal = valDefs.head
-    //val cleanedAwaitExpr = univers.resetAllAttrs(awaitExpr)
-    //val newTal = universe.resetLocalAttrs(tal)
+  def applyOnCompleteFunc (elseExpr: Expr[Unit], promise: Expr[Promise[Boolean]], result : Expr[scala.util.Try[Boolean]]) = {
+     reify {
+       if (result.splice.isFailure) {
+         completePromise(promise, result).splice
+       } else {
+         elseExpr.splice
+       }
+     }
+  }
 
+  def caseAwaitCall(state: Int, future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit]) = {
+    cq"$state => ${onComplete(future, fun)}"
+  }
+
+  def onComplete(future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit]) = {
+    reify {
+      future.splice.onComplete(fun.splice)(scala.concurrent.ExecutionContext.global)
+    }
+
+  }
+
+  def completePromise(promise: Expr[Promise[Boolean]], result: Expr[scala.util.Try[Boolean]]) = {
+    reify {
+      promise.splice.complete(result.splice);
+      ()
+    }
+  }
+
+
+
+
+
+  def stateMachineSkeleton() = {
     val tree = reify {
       class MyStateMachine extends AnyRef {
-        Expr[Unit](tal).splice
-        var f2 = Expr[Future[Boolean]](awaitExpr).splice
         var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
-        def resume$async : Unit = Unit
+        var state : Int = 0;
+
+        def resume$async : Unit = {
+
+        }
 
         def apply(result : scala.util.Try[Boolean]): Unit = {
+          Unit
         }
       }
     }
