@@ -113,13 +113,16 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
   val universe: reflect.internal.SymbolTable = asyncMacro.global
 
-  import universe._
+  import asyncMacro.global._
 
-  def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = universe.Expr[T](rootMirror, universe.FixedMirrorTreeCreator(rootMirror, tree))
+  def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = asyncMacro.global.Expr[T](rootMirror, asyncMacro.global.FixedMirrorTreeCreator(rootMirror, tree))
 
   case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
-    def stateMachineMember(name: TermName): Symbol =
+    def stateMachineMember(name: TermName): Symbol = {
+      println(stateMachineClass)
       stateMachineClass.info.member(name)
+    }
+
     def memberRef(name: TermName): Tree =
       gen.mkAttributedRef(stateMachineMember(name))
   }
@@ -140,18 +143,20 @@ trait AsyncMacroInigo extends BlackboxMacro {
       case _ => false
     }
   }
+
   def asyncImpl(value: c.Expr[Boolean]) : c.Expr[Future[Boolean]] = {
-    val notAwaitValDefs = blockToList(value.tree.asInstanceOf[Tree]).collect{
-      case valDef @ ValDef(_, name, _ , call @ Apply(method, param1 :: Nil)) if !isAwait(call) => valDef
-    }
+    val skeleton = stateMachineSkeleton().tree
+    val classSkeleton = asyncMacro.callSiteTyper.typedPos(skeleton.pos)(skeleton).setType(skeleton.tpe)
+    // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
+    val sLookup = SymLookup(classSkeleton.asInstanceOf[Block].stats.head.symbol, applyDefDefDummyBody.vparamss.head.head.symbol)
+
     val awaitCall = blockToList(value.tree.asInstanceOf[Tree]).collectFirst{
-      case call @ Apply(method, param1 :: Nil) if isAwait(call) => stateMachineSkeleton()
+      case valDef @ ValDef (_ , _, _, call @ Apply(method, param1 :: Nil)) if isAwait(call) => Awaitable(param1, sLookup.stateMachineMember(TermName("result")), valDef )
     }
 
-    val stateMachine = stateMachineSkeleton()
-    val sLookup = SymLookup(stateMachine.tree.symbol, applyDefDefDummyBody.vparamss.head.head.symbol)
-    val resultMember = sLookup.memberRef(TermName("result$async"))
-
+    val awaitState = new AsyncStateWithAwait(Nil, 0, 1, awaitCall.get, sLookup)
+    println(s"AwaitState = ${show(awaitState.mkHandlerCaseForState)}")
+    println(s"AwaitState = ${show(awaitState.mkOnCompleteHandler)}")
     awaitCall.get.asInstanceOf[c.Expr[Future[Boolean]]]
   }
 
@@ -163,7 +168,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
   private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
     CaseDef(Literal(Constant(num)), EmptyTree, rhs)
 
-  case class Awaitable(expr: Tree, resultName: Symbol, resultType: Type, resultValDef: ValDef)
+  case class Awaitable(expr: Tree, resultName: Symbol, resultValDef: ValDef)
 
   val applyDefDefDummyBody: DefDef = {
     val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), TermName("tr"), TypeTree(tryType[Any]), EmptyTree)))
@@ -209,7 +214,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
       val tryGetTree =
         Assign(
           Ident(awaitable.resultName),
-          TypeApply(Select(tryyGet[T](Expr[scala.util.Try[T]](Ident(symLookup.applyTrParam))).tree, newTermName("asInstanceOf")), List(TypeTree(awaitable.resultType)))
+          TypeApply(Select(tryyGet[T](Expr[scala.util.Try[T]](Ident(symLookup.applyTrParam))).tree, newTermName("asInstanceOf")), List(TypeTree(typeOf[Boolean])))
         )
 
       /* if (tr.isFailure)
@@ -319,9 +324,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
         var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
         var state : Int = 0;
 
-        def resume$async : Unit = {
 
-        }
 
         def apply(result : scala.util.Try[Boolean]): Unit = {
           Unit
