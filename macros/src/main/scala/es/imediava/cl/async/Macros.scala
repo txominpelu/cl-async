@@ -4,7 +4,7 @@ import language.experimental.macros
 
 import scala.reflect.macros.BlackboxMacro
 import scala.reflect.macros.BlackboxContext
-import scala.concurrent.{Promise, Await, Future}
+import scala.concurrent.{ExecutionContext, Promise, Await, Future}
 import scala.concurrent.duration.{Duration, DurationInt}
 import es.imediava.cl.async.utils.BuildAutomaton
 import scala.util.Success
@@ -12,7 +12,6 @@ import scala.util.Success
 import scala.tools.nsc.Global
 import scala.tools.nsc.transform.TypingTransformers
 import scala.annotation.compileTimeOnly
-import scala.reflect.internal.Trees
 
 
 trait FlattenFunctionCalls extends BlackboxMacro {
@@ -118,7 +117,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
   def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = universe.Expr[T](rootMirror, universe.FixedMirrorTreeCreator(rootMirror, tree))
 
-  case class SymLookup(stateMachineClass: Symbol) {
+  case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
     def stateMachineMember(name: TermName): Symbol =
       stateMachineClass.info.member(name)
     def memberRef(name: TermName): Tree =
@@ -150,10 +149,92 @@ trait AsyncMacroInigo extends BlackboxMacro {
     }
 
     val stateMachine = stateMachineSkeleton()
-    val sLookup = SymLookup(stateMachine.tree.symbol)
+    val sLookup = SymLookup(stateMachine.tree.symbol, applyDefDefDummyBody.vparamss.head.head.symbol)
     val resultMember = sLookup.memberRef(TermName("result$async"))
 
     awaitCall.get.asInstanceOf[c.Expr[Future[Boolean]]]
+  }
+
+  private def literalUnit = Literal(Constant(()))
+
+  private def mkHandlerCase(num: Int, rhs: List[Tree]): CaseDef =
+    mkHandlerCase(num, Block(rhs, literalUnit))
+
+  private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
+    CaseDef(Literal(Constant(num)), EmptyTree, rhs)
+
+  case class Awaitable(expr: Tree, resultName: Symbol, resultType: Type, resultValDef: ValDef)
+
+  val applyDefDefDummyBody: DefDef = {
+    val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), TermName("tr"), TypeTree(tryType[Any]), EmptyTree)))
+    DefDef(NoMods, TermName("apply"), Nil, applyVParamss, TypeTree(definitions.UnitTpe), Literal(Constant(())))
+  }
+
+  trait AsyncState {
+    def state: Int
+
+    def nextStates: List[Int]
+
+    def mkHandlerCaseForState: CaseDef
+
+    def mkOnCompleteHandler[T: WeakTypeTag]: Option[CaseDef] = None
+
+    var stats: List[Tree]
+
+    final def allStats: List[Tree] = this match {
+      case a: AsyncStateWithAwait => stats :+ a.awaitable.resultValDef
+      case _ => stats
+    }
+
+    final def body: Tree = stats match {
+      case stat :: Nil => stat
+      case init :+ last => Block(init, last)
+    }
+  }
+
+
+  final class AsyncStateWithAwait(var stats: List[Tree], val state: Int, nextState: Int,
+                                  val awaitable: Awaitable, symLookup: SymLookup)
+    extends AsyncState {
+
+    def nextStates: List[Int] =
+      List(nextState)
+
+    override def mkHandlerCaseForState: CaseDef = {
+      val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY))).tree
+      mkHandlerCase(state, stats :+ callOnComplete)
+    }
+
+    override def mkOnCompleteHandler[T: WeakTypeTag]: Option[CaseDef] = {
+      val tryGetTree =
+        Assign(
+          Ident(awaitable.resultName),
+          TypeApply(Select(tryyGet[T](Expr[scala.util.Try[T]](Ident(symLookup.applyTrParam))).tree, newTermName("asInstanceOf")), List(TypeTree(awaitable.resultType)))
+        )
+
+      /* if (tr.isFailure)
+       *   result.complete(tr.asInstanceOf[Try[T]])
+       * else {
+       *   <resultName> = tr.get.asInstanceOf[<resultType>]
+       *   <nextState>
+       *   <mkResumeApply>
+       * }
+       */
+      val ifIsFailureTree =
+        If(tryyIsFailure(Expr[scala.util.Try[T]](Ident(symLookup.applyTrParam))).tree,
+          completeProm[T](
+            Expr[Promise[T]](symLookup.memberRef(TermName("result"))),
+            Expr[scala.util.Try[T]](
+              TypeApply(Select(Ident(symLookup.applyTrParam), newTermName("asInstanceOf")),
+                List(TypeTree(tryType[T]))))).tree,
+          Block(List(tryGetTree, mkStateTree(nextState, symLookup)), mkResumeApply(symLookup))
+        )
+
+      Some(mkHandlerCase(state, List(ifIsFailureTree)))
+    }
+
+    override val toString: String =
+      s"AsyncStateWithAwait #$state, next = $nextState"
   }
 
   def applyOnCompleteFunc (elseExpr: Expr[Unit], promise: Expr[Promise[Boolean]], result : Expr[scala.util.Try[Boolean]]) = {
@@ -165,6 +246,10 @@ trait AsyncMacroInigo extends BlackboxMacro {
        }
      }
   }
+
+  private def mkResumeApply(symLookup: SymLookup) =
+    Apply(symLookup.memberRef(TermName("resume")), Nil)
+
 
   def caseAwaitCall(state: Int, future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit]) = {
     cq"$state => ${onComplete(future, fun)}"
@@ -184,9 +269,49 @@ trait AsyncMacroInigo extends BlackboxMacro {
     }
   }
 
+  private def mkStateTree(nextState: Int, symLookup: SymLookup): Tree =
+    Assign(symLookup.memberRef(TermName("state")), Literal(Constant(nextState)))
 
 
+  def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]
+  def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
+  def execContextType: Type = weakTypeOf[ExecutionContext]
 
+  def createProm[A: WeakTypeTag]: Expr[Promise[A]] = reify {
+    Promise[A]()
+  }
+
+  def promiseToFuture[A: WeakTypeTag](prom: Expr[Promise[A]]) = reify {
+    prom.splice.future
+  }
+
+  def future[A: WeakTypeTag](a: Expr[A])(execContext: Expr[ExecutionContext]) = reify {
+    Future(a.splice)(execContext.splice)
+  }
+
+  def onComplete[A, U](future: Expr[Future[A]], fun: Expr[scala.util.Try[A] => U],
+                       execContext: Expr[ExecutionContext]): Expr[Unit] = reify {
+    future.splice.onComplete(fun.splice)(execContext.splice)
+  }
+
+  def completeProm[A](prom: Expr[Promise[A]], value: Expr[scala.util.Try[A]]): Expr[Unit] = reify {
+    prom.splice.complete(value.splice)
+    Expr[Unit](Literal(Constant(()))).splice
+  }
+
+  def tryyIsFailure[A](tryy: Expr[scala.util.Try[A]]): Expr[Boolean] = reify {
+    tryy.splice.isFailure
+  }
+
+  def tryyGet[A](tryy: Expr[scala.util.Try[A]]): Expr[A] = reify {
+    tryy.splice.get
+  }
+  def tryySuccess[A: WeakTypeTag](a: Expr[A]): Expr[scala.util.Try[A]] = reify {
+    scala.util.Success[A](a.splice)
+  }
+  def tryyFailure[A: WeakTypeTag](a: Expr[Throwable]): Expr[scala.util.Try[A]] = reify {
+    scala.util.Failure[A](a.splice)
+  }
 
   def stateMachineSkeleton() = {
     val tree = reify {
