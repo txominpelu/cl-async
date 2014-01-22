@@ -4,6 +4,15 @@ Steps in the transformation:
 Transformation to async-specific ANF:
 
 - Calls to await function cannot have complex expressions in their parameters
+- Construction of the skeleton of the StateMachine class
+- Generate code for every state: case for handling the state on the resume$async method
+ and another case for the state on the apply(result:Try[])
+- Aggregation of the cases for every state into the definition of the resume$async and the
+ apply(result:Try[]) methods
+- Lifting of variables and methods. The methods defined in the previous step as well as all
+ the variables used inside that correspond to fields of the class need to be assigned the
+ appropiate symbol and owner.
+ 
 
 
 # What was the project supposed to do?
@@ -25,10 +34,17 @@ http://docs.scala-lang.org/sips/pending/async.html
 
 It would do it by defining two macro methods:
 
- - async : when applied to a simple future it returns its input, when applied to a block it transforms the code inside the block into a statemachine where nested calls to async are
+ - async : when applied to a simple future it returns its input, when applied to a block it  
+ transforms the code inside the block into a statemachine where nested calls to async are
  transformed recursively and calls to await, ifs and matchs would be transformed to states of
  the machine.
 
- - await : receives an object of type Future and returns the value of the future. 
+ - await : receives an object of type Future and returns the value of the future. In the state 
+ machine this call is transformed into an state where the code between the last await / if or 
+ match and this await represents what will be executed. When the future is finished (method 
+ onComplete is called, the result of the future will be assigned to a variable and the state 
+ machine will pass to the next state.
+
+# Difficulties found 
 
 
