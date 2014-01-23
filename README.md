@@ -13,7 +13,12 @@ Transformation to async-specific ANF:
  the variables used inside that correspond to fields of the class need to be assigned the
  appropiate symbol and owner.
  
+# Step by step explanation
 
+# Simplifications
+
+For the sake of simplification the project has adopted a set of simplications over the initial
+project.
 
 # What was the project supposed to do?
 

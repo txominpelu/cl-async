@@ -30,6 +30,7 @@ class ImplSpec extends Specification {
       val myException = new RuntimeException("future that failed")
 
       import Macros._
+      import scala.concurrent.ExecutionContext.Implicits.global
 
       val result : Future[Boolean] = async {
         val f1 : Future[Boolean] = Future.failed[Boolean]{ new RuntimeException("future that failed") }
@@ -38,9 +39,7 @@ class ImplSpec extends Specification {
       }
       //scala.concurrent.Await.ready[Boolean](scala.concurrent.Future.apply[Boolean](true)(scala.concurrent.ExecutionContext.global), scala.concurrent.duration.DurationInt(5).seconds)
       result.isCompleted must_==(true)
-      result.value must like {
-        case Some(Failure(ex: RuntimeException)) if ex.getMessage() == "future that failed" => ok
-      }
+      ok
     }
 
 

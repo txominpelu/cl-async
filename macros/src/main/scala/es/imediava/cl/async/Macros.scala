@@ -139,12 +139,14 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
   case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
     def stateMachineMember(name: TermName): Symbol = {
-      println(stateMachineClass)
-      stateMachineClass.info.member(name)
+      val result = stateMachineClass.info.member(name)
+      result
     }
 
-    def memberRef(name: TermName): Tree =
-      gen.mkAttributedRef(stateMachineMember(name))
+    def memberRef(name: TermName): Tree = {
+      val result = gen.mkAttributedRef(stateMachineMember(name))
+      result
+    }
   }
 
   def listToBlock(stats: List[Tree]) : Tree = {
@@ -170,15 +172,18 @@ trait AsyncMacroInigo extends BlackboxMacro {
       sym.owner = classSkeleton.symbol
   }
 
-  def asyncImpl(value: c.Expr[Boolean]) : c.Expr[Future[Boolean]] = {
-    val skeleton = stateMachineSkeleton(applyDefDefDummyBody).tree
+  def asyncImpl(value: c.Expr[Boolean])(execContext : c.Expr[ExecutionContext]) : c.Expr[Future[Boolean]] = {
+    val execContextValDef = ValDef(NoMods, TermName("context"), TypeTree(), execContext.asInstanceOf[Expr[ExecutionContext]].tree)
+    val skeleton = stateMachineSkeleton(applyDefDefDummyBody, execContextValDef).tree
     val classSkeleton = asyncMacro.callSiteTyper.typedPos(skeleton.pos)(skeleton).setType(skeleton.tpe).asInstanceOf[Block].stats.head
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
     println(s"Param symbol: ${applyDefDefDummyBody.vparamss.head.head.symbol}")
     val sLookup = SymLookup(classSkeleton.symbol, applyDefDefDummyBody.vparamss.head.head.symbol)
 
+
     val awaitCall = blockToList(value.tree.asInstanceOf[Tree]).collectFirst{
-      case valDef @ ValDef (_ , _, tp, call @ Apply(method, param1 :: Nil)) if isAwait(call) => Awaitable(param1, valDef.symbol, valDef )
+      case valDef @ ValDef (mods , _, tp, call @ Apply(method, param1 :: Nil)) if isAwait(call)   =>
+        Awaitable(sLookup.memberRef("f1"), valDef.name)
     }
 
     val awaitState = new AsyncStateWithAwait(Nil, 0, 1, awaitCall.get, sLookup)
@@ -228,15 +233,12 @@ trait AsyncMacroInigo extends BlackboxMacro {
           //treeCopy.Match(newMatch, sLookup.memberRef(TermName("state")), cases)
     }
 
-    val result = asyncMacro.transformAt(final4){
-      case tmpl @ Template(parent, self, body) if tmpl.symbol.owner == newClassSkeleton.symbol =>
-        (ctx: analyzer.Context) =>
-          treeCopy.Template(tmpl, parent, self, q"var f1: scala.concurrent.Future[Boolean] = null; var a1 : scala.Boolean = false" :: body)
-    }
 
+
+    val result = final4
     asyncMacro.callSiteTyper.typed(result).setType(typeOf[Future[Boolean]])
 
-    println(s"Final Class=${show(result, printTypes = true)}")
+    println(s"Final Class=${show(result)}")
     println(s"Final Class=${showRaw(result, printIds = true)}")
     c.Expr[Future[Boolean]](result.asInstanceOf[c.Tree])
 
@@ -250,7 +252,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
   private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
     CaseDef(Literal(Constant(num)), EmptyTree, rhs)
 
-  case class Awaitable(expr: Tree, resultName: Symbol, resultValDef: ValDef)
+  case class Awaitable(expr: Tree, resultName: TermName)
 
   val applyDefDefDummyBody: DefDef = {
     val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), TermName("result"), TypeTree(tryType[Boolean]), EmptyTree)))
@@ -268,11 +270,6 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
     var stats: List[Tree]
 
-    final def allStats: List[Tree] = this match {
-      case a: AsyncStateWithAwait => stats :+ a.awaitable.resultValDef
-      case _ => stats
-    }
-
     final def body: Tree = stats match {
       case stat :: Nil => stat
       case init :+ last => Block(init, last)
@@ -288,15 +285,18 @@ trait AsyncMacroInigo extends BlackboxMacro {
       List(nextState)
 
     override def mkHandlerCaseForState: CaseDef = {
-      val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY))).tree
-      mkHandlerCase(state, stats :+ callOnComplete).setType(typeOf[Unit])
+      //val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY))).tree
+      val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY)), Expr(symLookup.memberRef("context"))).tree
+      //val callOnComplete = onComplete(Expr(awaitable.expr),Expr(symLookup.memberRef("apply"))).tree
+      //println(show(callOnComplete))
+      mkHandlerCase(state, stats :+ callOnComplete)
     }
 
     override def mkOnCompleteHandler: Option[CaseDef] = {
       val tryGetTree =
         Assign(
-          Ident(awaitable.resultName),
-          TypeApply(Select(tryyGet[Boolean](Expr[scala.util.Try[Boolean]](Ident(symLookup.applyTrParam))).tree, newTermName("asInstanceOf")), List(TypeTree(typeOf[Boolean])))
+          symLookup.memberRef(awaitable.resultName),
+          TypeApply(Select(tryyGet[Boolean](Expr[scala.util.Try[Boolean]](Ident(symLookup.applyTrParam))).tree, newTermName("asInstanceOf")), List(TypeTree(definitions.BooleanTpe)))
         )
 
       /* if (tr.isFailure)
@@ -342,9 +342,10 @@ trait AsyncMacroInigo extends BlackboxMacro {
     Apply(symLookup.memberRef(TermName("resume$async")), Nil)
 
 
-  def onComplete(future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit]) = {
+  def onComplete(future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit], context : Expr[ExecutionContext]) = {
     reify {
-      future.splice.onComplete[Unit](fun.splice)(scala.concurrent.ExecutionContext.global)
+      future.splice.onComplete(fun.splice)(context.splice)
+      ()
     }
 
   }
@@ -379,11 +380,6 @@ trait AsyncMacroInigo extends BlackboxMacro {
     Future(a.splice)(execContext.splice)
   }
 
-  def onComplete[A, U](future: Expr[Future[A]], fun: Expr[scala.util.Try[A] => U],
-                       execContext: Expr[ExecutionContext]): Expr[Unit] = reify {
-    future.splice.onComplete(fun.splice)(execContext.splice)
-  }
-
   def completeProm[A](prom: Expr[Promise[A]], value: Expr[scala.util.Try[A]]): Expr[Unit] = reify {
     prom.splice.complete(value.splice)
     Expr[Unit](Literal(Constant(()))).splice
@@ -403,11 +399,14 @@ trait AsyncMacroInigo extends BlackboxMacro {
     scala.util.Failure[A](a.splice)
   }
 
-  def stateMachineSkeleton(applyDef: DefDef) = {
+  def stateMachineSkeleton(applyDef: DefDef, execContext : ValDef) = {
     val tree = reify {
       class MyStateMachine extends AnyRef {
+        Expr[Unit](execContext).splice
         var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
         var state : Int = 0;
+        var f1 : scala.concurrent.Future[Boolean] = null
+        var a1 : scala.Boolean = false
 
         Expr[() => Unit ](applyDef).splice
 
@@ -428,7 +427,7 @@ object Macros {
   @compileTimeOnly("`await` must be enclosed in an `async` block")
   def await(f: Future[Boolean]) : Boolean = ???
 
-  def async(value: Boolean) : Future[Boolean] = macro AsyncMacroInigo.asyncImpl
+  def async(value: Boolean)(implicit execContext : ExecutionContext) : Future[Boolean] = macro AsyncMacroInigo.asyncImpl
 
   /*
    * val x = 1
