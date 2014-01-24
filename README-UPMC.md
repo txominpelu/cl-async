@@ -147,6 +147,17 @@ that is not done right, what makes the compiler run into a type error like the f
 scala.reflect.internal.Types$TypeError: value <none> is not a member of es.imediava.cl.async.ImplSpec
 
 
+# How to run the project
+
+- Install sbt 0.13 as explained in:
+
+http://www.scala-sbt.org/0.13.0/docs/Getting-Started/Setup.html
+
+- Clone the project from github
+
+- From the root of the project run sbt and once in the command line execute *project macros* to get into the run project and *test* to execute the tests
+
+
 # Difficulties found 
 
 

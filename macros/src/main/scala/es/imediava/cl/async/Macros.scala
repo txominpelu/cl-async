@@ -189,7 +189,6 @@ trait AsyncMacroInigo extends BlackboxMacro {
     val skeleton = stateMachineSkeleton(applyDefDefDummyBody, execContextValDef).tree
     val classSkeleton = asyncMacro.callSiteTyper.typedPos(skeleton.pos)(skeleton).setType(skeleton.tpe).asInstanceOf[Block].stats.head
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
-    println(s"Param symbol: ${applyDefDefDummyBody.vparamss.head.head.symbol}")
     val sLookup = SymLookup(classSkeleton.symbol, applyDefDefDummyBody.vparamss.head.head.symbol)
 
 
@@ -199,7 +198,8 @@ trait AsyncMacroInigo extends BlackboxMacro {
     }
 
     val awaitState = new AsyncStateWithAwait(Nil, 0, 1, awaitCall.get, sLookup)
-    val resumeAsyncDef = buildDef(sLookup.stateMachineMember("resume$async"), awaitState.mkHandlerCaseForState :: Nil)
+    val finalState = new FinalAsyncState(1, Expr[Promise[Boolean]](sLookup.memberRef("result$async")), reify { scala.util.Success(Expr[Boolean](sLookup.memberRef("a1")).splice) } )
+    val resumeAsyncDef = buildDef(sLookup.stateMachineMember("resume$async"), finalState.mkHandlerCaseForState :: awaitState.mkHandlerCaseForState :: Nil)
     val applyDef = buildDef(sLookup.stateMachineMember("apply"), awaitState.mkOnCompleteHandler.get :: Nil)
 
     change(resumeAsyncDef.symbol, classSkeleton)
@@ -221,11 +221,9 @@ trait AsyncMacroInigo extends BlackboxMacro {
     val finalTree3 = asyncMacro.transformAt(finalTree2){
       case th@This(a) if th.symbol.owner != classSkeleton.symbol.owner =>
         (ctx: analyzer.Context) =>
-          println(showRaw(th))
           Select(This(classSkeleton.symbol), sLookup.stateMachineMember("apply"))
     }
 
-    //println(s"Final Class=${showRaw(finalTree2)}")
     val myClass = finalTree3.asInstanceOf[ClassDef]
 
     def selectStateMachine(selection: TermName) = Select(Ident("stateMachine"), selection)
@@ -243,16 +241,13 @@ trait AsyncMacroInigo extends BlackboxMacro {
       case mtch @ Match(id @Ident(t@TermName("state")), cases ) if id.symbol.owner != newClassSkeleton.symbol =>
         (ctx: analyzer.Context) =>
           val newMatch = Match(sLookup.memberRef(TermName("state")), cases )
-          //println(s"New thing: ${show(newMatch, printTypes = true)}")
           asyncMacro.callSiteTyper.typedPos(newMatch.pos)(newMatch)
-          //treeCopy.Match(newMatch, sLookup.memberRef(TermName("state")), cases)
     }
 
     val result = asyncMacro.transformAt(final4) {
       case f@Function(_, _) if f.symbol.owner != newClassSkeleton =>
         (ctx: analyzer.Context) =>
-          println("Changing owner")
-          changeOwner(f, newClassSkeleton.symbol, f.symbol)
+          changeOwner(f, f.symbol.owner, ctx.owner)
     }
 
 
@@ -313,6 +308,16 @@ trait AsyncMacroInigo extends BlackboxMacro {
     }
   }
 
+  case class FinalAsyncState(state: Int, promise: Expr[Promise[Boolean]], result: Expr[scala.util.Try[Boolean]]) extends AsyncState {
+
+    def nextStates: List[Int] = Nil
+
+    override def mkHandlerCaseForState: CaseDef = cq"${state} => ${completePromise(promise, result)}".asInstanceOf[CaseDef]
+
+    var stats: List[Tree] = Nil
+
+  }
+
 
   final class AsyncStateWithAwait(var stats: List[Tree], val state: Int, nextState: Int,
                                   val awaitable: Awaitable, symLookup: SymLookup)
@@ -322,11 +327,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
       List(nextState)
 
     override def mkHandlerCaseForState: CaseDef = {
-      //val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY))).tree
       val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY)), Expr(symLookup.memberRef("context")))
-      //val callOnComplete = onComplete(symLookup)
-      //val callOnComplete = onComplete(Expr(awaitable.expr),Expr(symLookup.memberRef("apply"))).tree
-      //println(show(callOnComplete))
       mkHandlerCase(state, stats :+ callOnComplete.tree)
     }
 
@@ -445,7 +446,7 @@ trait AsyncMacroInigo extends BlackboxMacro {
         Expr[Unit](execContext).splice
         var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
         var state : Int = 0;
-        var f1 : scala.concurrent.Future[Boolean] = null
+        var f1 : scala.concurrent.Future[Boolean] = scala.concurrent.Future.apply(true)(scala.concurrent.ExecutionContext.global)
         var a1 : scala.Boolean = false
 
         Expr[(scala.util.Try[Boolean]) => Unit ](applyDef).splice

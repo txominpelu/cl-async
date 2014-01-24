@@ -30,6 +30,7 @@ class ImplSpec extends Specification {
 
       import Macros._
       import scala.concurrent.ExecutionContext.Implicits.global
+      import scala.concurrent.duration.DurationInt
 
       val result : Future[Boolean] = async {
         val f1 : Future[Boolean] = Future.apply(true)
@@ -37,7 +38,8 @@ class ImplSpec extends Specification {
         a1
       }
       //scala.concurrent.Await.ready[Boolean](scala.concurrent.Future.apply[Boolean](true)(scala.concurrent.ExecutionContext.global), scala.concurrent.duration.DurationInt(5).seconds)
-      result.isCompleted must_==(true)
+      println(result)
+      Await.result(result, DurationInt(2).seconds) must_==(true)
       ok
     }
 
