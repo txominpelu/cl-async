@@ -6,7 +6,6 @@ import scala.reflect.macros.BlackboxMacro
 import scala.reflect.macros.BlackboxContext
 import scala.concurrent.{ExecutionContext, Promise, Await, Future}
 import scala.concurrent.duration.{Duration, DurationInt}
-import es.imediava.cl.async.utils.BuildAutomaton
 import scala.util.Success
 
 import scala.tools.nsc.Global
@@ -125,6 +124,19 @@ private[async] trait AsyncMacro
     trans.transform(tree)
   }
 
+  object traverser extends Traverser {
+       var applies = List[Apply]()
+       override def traverse(tree: Tree): Unit = tree match {
+         case a if a.symbol == NoSymbol =>
+           println(s"No symbol at: $a")
+           super.traverseTrees(a.children)
+         case _ =>
+           //println(s"Reading children of:$tree: ${tree.children}")
+           super.traverseTrees(tree.children)
+       }
+     }
+
+
 }
 
 trait AsyncMacroInigo extends BlackboxMacro {
@@ -212,15 +224,18 @@ trait AsyncMacroInigo extends BlackboxMacro {
           println(showRaw(th))
           Select(This(classSkeleton.symbol), sLookup.stateMachineMember("apply"))
     }
+
     //println(s"Final Class=${showRaw(finalTree2)}")
     val myClass = finalTree3.asInstanceOf[ClassDef]
 
     def selectStateMachine(selection: TermName) = Select(Ident("stateMachine"), selection)
 
+    val typedClass = asyncMacro.callSiteTyper.typedPos(myClass.pos)(myClass)
+
     val final3 = Block(List[Tree](
-      myClass,
+      typedClass,
       ValDef(NoMods, TermName("stateMachine"), TypeTree(), Apply(Select(New(Ident(myClass.symbol)), nme.CONSTRUCTOR), Nil)),
-      spawn(Apply(selectStateMachine(TermName("apply")), Nil), reify { scala.concurrent.ExecutionContext.global }.tree)
+      spawn(Apply(selectStateMachine(TermName("apply2")), Nil), reify { scala.concurrent.ExecutionContext.global }.tree)
     ),
       promiseToFuture(Expr[Promise[Boolean]](selectStateMachine("result$async"))).tree)
 
@@ -228,20 +243,30 @@ trait AsyncMacroInigo extends BlackboxMacro {
       case mtch @ Match(id @Ident(t@TermName("state")), cases ) if id.symbol.owner != newClassSkeleton.symbol =>
         (ctx: analyzer.Context) =>
           val newMatch = Match(sLookup.memberRef(TermName("state")), cases )
-          asyncMacro.callSiteTyper.typedPos(newMatch.pos)(newMatch)
           //println(s"New thing: ${show(newMatch, printTypes = true)}")
+          asyncMacro.callSiteTyper.typedPos(newMatch.pos)(newMatch)
           //treeCopy.Match(newMatch, sLookup.memberRef(TermName("state")), cases)
     }
 
+    val result = asyncMacro.transformAt(final4) {
+      case f@Function(_, _) if f.symbol.owner != newClassSkeleton =>
+        (ctx: analyzer.Context) =>
+          println("Changing owner")
+          changeOwner(f, newClassSkeleton.symbol, f.symbol)
+    }
 
 
-    val result = final4
     asyncMacro.callSiteTyper.typed(result).setType(typeOf[Future[Boolean]])
-
+    asyncMacro.traverser.traverse(result)
     println(s"Final Class=${show(result)}")
-    println(s"Final Class=${showRaw(result, printIds = true)}")
+    println(s"Final Class=${showRaw(result, printTypes = true)}")
     c.Expr[Future[Boolean]](result.asInstanceOf[c.Tree])
 
+  }
+
+  def changeOwner(tree: Tree, oldOwner: Symbol, newOwner: Symbol): tree.type = {
+    new ChangeOwnerAndModuleClassTraverser(oldOwner, newOwner).traverse(tree)
+    tree
   }
 
   private def literalUnit = Literal(Constant(()))
@@ -257,6 +282,18 @@ trait AsyncMacroInigo extends BlackboxMacro {
   val applyDefDefDummyBody: DefDef = {
     val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), TermName("result"), TypeTree(tryType[Boolean]), EmptyTree)))
     DefDef(NoMods, TermName("apply"), Nil, applyVParamss, TypeTree(definitions.UnitTpe), Literal(Constant(())))
+  }
+
+  class ChangeOwnerAndModuleClassTraverser(oldowner: Symbol, newowner: Symbol)
+    extends ChangeOwnerTraverser(oldowner, newowner) {
+
+    override def traverse(tree: Tree) {
+      tree match {
+        case _: DefTree => change(tree.symbol.moduleClass)
+        case _          =>
+      }
+      super.traverse(tree)
+    }
   }
 
   trait AsyncState {
@@ -286,10 +323,11 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
     override def mkHandlerCaseForState: CaseDef = {
       //val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY))).tree
-      val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY)), Expr(symLookup.memberRef("context"))).tree
+      val callOnComplete = onComplete(Expr(awaitable.expr),Expr(This(tpnme.EMPTY)), Expr(symLookup.memberRef("context")))
+      //val callOnComplete = onComplete(symLookup)
       //val callOnComplete = onComplete(Expr(awaitable.expr),Expr(symLookup.memberRef("apply"))).tree
       //println(show(callOnComplete))
-      mkHandlerCase(state, stats :+ callOnComplete)
+      mkHandlerCase(state, stats :+ callOnComplete.tree)
     }
 
     override def mkOnCompleteHandler: Option[CaseDef] = {
@@ -342,7 +380,9 @@ trait AsyncMacroInigo extends BlackboxMacro {
     Apply(symLookup.memberRef(TermName("resume$async")), Nil)
 
 
-  def onComplete(future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit], context : Expr[ExecutionContext]) = {
+  def onComplete(future: Expr[Future[Boolean]], fun: Expr[(scala.util.Try[Boolean]) => Unit], context: Expr[ExecutionContext]) = {
+    //Apply(Apply(TypeApply(Select(Ident(sLookup.stateMachineMember("f1")),TermName("onComplete")), List(TypeTree(typeOf[Unit]))),
+      //List(This(TypeName("MyStateMachine")))), List(Select(This(sLookup.stateMachineClass), TermName("context"))))
     reify {
       future.splice.onComplete(fun.splice)(context.splice)
       ()
@@ -401,18 +441,18 @@ trait AsyncMacroInigo extends BlackboxMacro {
 
   def stateMachineSkeleton(applyDef: DefDef, execContext : ValDef) = {
     val tree = reify {
-      class MyStateMachine extends AnyRef {
+      class MyStateMachine extends (scala.util.Try[Boolean] => Unit) {
         Expr[Unit](execContext).splice
         var result$async : scala.concurrent.Promise[Boolean] = scala.concurrent.Promise.apply[Boolean]();
         var state : Int = 0;
         var f1 : scala.concurrent.Future[Boolean] = null
         var a1 : scala.Boolean = false
 
-        Expr[() => Unit ](applyDef).splice
+        Expr[(scala.util.Try[Boolean]) => Unit ](applyDef).splice
 
         def resume$async() : Unit = {}
 
-        def apply() : Unit = resume$async()
+        def apply2() : Unit = resume$async()
 
       }
     }

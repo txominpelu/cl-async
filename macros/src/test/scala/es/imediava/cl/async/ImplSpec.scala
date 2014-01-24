@@ -27,13 +27,12 @@ class ImplSpec extends Specification {
 
 
     "deal with future that fails " in {
-      val myException = new RuntimeException("future that failed")
 
       import Macros._
       import scala.concurrent.ExecutionContext.Implicits.global
 
       val result : Future[Boolean] = async {
-        val f1 : Future[Boolean] = Future.failed[Boolean]{ new RuntimeException("future that failed") }
+        val f1 : Future[Boolean] = Future.apply(true)
         var a1 = Macros.await(f1)
         a1
       }

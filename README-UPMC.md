@@ -3,8 +3,8 @@ Steps in the transformation:
 
 Transformation to async-specific ANF:
 
-- Calls to await function cannot have complex expressions in their parameters
-- [X]Construction of the skeleton of the StateMachine class
+- [ ] Calls to await function cannot have complex expressions in their parameters
+- [X] Construction of the skeleton of the StateMachine class
 - [X] Generate code for every state: case for handling the state on the resume$async method
  and another case for the state on the apply(result:Try[])
 - [X] Aggregation of the cases for every state into the definition of the resume$async and the
@@ -15,11 +15,6 @@ Transformation to async-specific ANF:
  one of the sentences doesn't have the right symbol/types assigned what makes the compiler throw
  an exception.
  
-
-# Simplifications
-
-For the sake of simplification the project has adopted a set of simplications over the initial
-project.
 
 # What was the project supposed to do?
 
@@ -50,6 +45,23 @@ It would do it by defining two macro methods:
  match and this await represents what will be executed. When the future is finished (method 
  onComplete is called, the result of the future will be assigned to a variable and the state 
  machine will pass to the next state.
+
+# Inspiration
+
+The project was born to be a simplified version of scala/async. I did not want to take that 
+project and extend it to add new functionality but the idea was to start from scratch and use
+scala/async as an inspiration that would allow me to understand all the concepts about how
+the project could be implemented and how the scala compiler works but without an initial base
+of code. Over the development of the project I have tried to use an assemble some of the pieces
+of scala/async but due to the complexity and my lack of understanding of the scala compiler
+I have only manage to implement some of the features without a full example of the project
+that could work.
+
+I have had the lack of being able to count on the collaboration of some of the members of
+the mailing list scala-internals, where I created a thread that has been dedicated to answer
+all the questions that I had during the development of the project. The thread is available at:
+
+https://groups.google.com/forum/#!topic/scala-internals/rIyJ4yHdPDU
 
 # What has been done ?
 
