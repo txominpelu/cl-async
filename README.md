@@ -50,6 +50,76 @@ It would do it by defining two macro methods:
  onComplete is called, the result of the future will be assigned to a variable and the state 
  machine will pass to the next state.
 
+# What has been done ?
+
+For the simple case of an async that has an await with a simple future on it, without if/matchs
+and defs like the following:
+
+```scala
+val result : Future[Boolean] = async {
+          val f1 : Future[Boolean] = Future.failed[Boolean]{ new RuntimeException("future that failed") } 
+          var a1 = Macros.await(f1) 
+          a1
+}
+```
+
+The project can convert it to the following:
+
+```scala
+class MyStateMachine extends AnyRef {
+    def <init>(): MyStateMachine = {
+      MyStateMachine.super.<init>();
+      ()
+    };
+    private[this] val context: scala.concurrent.ExecutionContextExecutor = scala.concurrent.ExecutionContext.Implicits.global;
+    <stable> <accessor> def context: scala.concurrent.ExecutionContextExecutor = MyStateMachine.this.context;
+    private[this] var result$async: scala.concurrent.Promise[Boolean] = Promise.apply[Boolean]();
+    <accessor> def result$async: scala.concurrent.Promise[Boolean] = MyStateMachine.this.result$async;
+    <accessor> def result$async_=(x$1: scala.concurrent.Promise[Boolean]): Unit = MyStateMachine.this.result$async = x$1;
+    private[this] var state: Int = 0;
+    <accessor> def state: Int = MyStateMachine.this.state;
+    <accessor> def state_=(x$1: Int): Unit = MyStateMachine.this.state = x$1;
+    private[this] var f1: scala.concurrent.Future[Boolean] = null;
+    <accessor> def f1: scala.concurrent.Future[Boolean] = MyStateMachine.this.f1;
+    <accessor> def f1_=(x$1: scala.concurrent.Future[Boolean]): Unit = MyStateMachine.this.f1 = x$1;
+    private[this] var a1: Boolean = false;
+    <accessor> def a1: Boolean = MyStateMachine.this.a1;
+    <accessor> def a1_=(x$1: Boolean): Unit = MyStateMachine.this.a1 = x$1;
+    def apply(result: scala.util.Try[Boolean]): Unit = MyStateMachine.this.state match {
+      case 0 => {
+        if (result.isFailure)
+          {
+            MyStateMachine.this.result$async.complete(result.asInstanceOf[scala.util.Try[Boolean]]);
+            ()
+          }
+        else
+          {
+            MyStateMachine.this.a1_=(result.get.asInstanceOf[Boolean]);
+            MyStateMachine.this.state_=(1);
+            MyStateMachine.this.resume$async()
+          };
+        ()
+      }
+    };
+    def resume$async(): Unit = MyStateMachine.this.state match {
+      case 0 => {
+        {
+          MyStateMachine.this.f1.onComplete[Unit]({
+            ((result: scala.util.Try[Boolean]) => MyStateMachine.this.apply(result))
+          })(MyStateMachine.this.context);
+          ()
+        };
+        ()
+      }
+    };
+    def apply2(): Unit = MyStateMachine.this.resume$async()
+  };
+  val stateMachine: MyStateMachine = new MyStateMachine();
+  Future.apply(stateMachine.apply2())(ExecutionContext.global);
+  stateMachine.result$async.future
+}
+```
+
 # Difficulties found 
 
 
