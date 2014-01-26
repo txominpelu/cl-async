@@ -1,0 +1,67 @@
+package es.imediava.cl.async.states
+
+import es.imediava.cl.async.{SymLookup, AsyncMacro}
+import scala.reflect.api.Exprs.Expr
+import scala.concurrent.{ExecutionContext, Future, Awaitable, Promise}
+import scala.reflect.internal.Trees.CaseDef
+import scala.reflect.internal.Trees.Tree
+import scala.reflect.internal.Trees.This
+import scala.reflect.internal.StdNames.tpnme
+import scala.reflect.internal.Trees.Assign
+import scala.reflect.internal.Trees.TypeApply
+import scala.reflect.internal.Trees.Select
+import scala.reflect.internal.Definitions.definitions
+import scala.reflect.internal.Trees.If
+import scala.reflect.internal.Names.TermName
+import scala.reflect.internal.Trees.Block
+import scala.Symbol
+
+trait AsyncState {
+
+  val universe: reflect.internal.SymbolTable
+
+  import universe._
+
+  def state: Int
+
+  def nextStates: List[Int]
+
+  def mkHandlerCaseForState: CaseDef
+
+  def mkOnCompleteHandler: Option[CaseDef] = None
+
+  var stats: List[Tree]
+
+  final def body: Tree = stats match {
+    case stat :: Nil => stat
+    case init :+ last => Block(init, last)
+  }
+}
+
+case class AsyncStates(asyncMacro: AsyncMacro)  {
+
+
+  val universe: reflect.internal.SymbolTable = asyncMacro.global
+
+  def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = asyncMacro.global.Expr[T](rootMirror, asyncMacro.global.FixedMirrorTreeCreator(rootMirror, tree))
+
+  case class Awaitable(expr: Tree, resultName: TermName)
+
+  case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
+
+    def stateMachineMember(name: TermName): Symbol = {
+      val result = stateMachineClass.info.member(name)
+      result
+    }
+
+    def memberRef(name: TermName): Tree = {
+      val result = gen.mkAttributedRef(stateMachineMember(name))
+      result
+    }
+  }
+
+
+
+}
+
+

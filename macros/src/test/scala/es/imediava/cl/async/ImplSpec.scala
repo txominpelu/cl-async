@@ -26,16 +26,33 @@ class ImplSpec extends Specification {
 
 
 
-    "deal with future that fails " in {
+    "deal with one future " in {
 
       import Macros._
       import scala.concurrent.ExecutionContext.Implicits.global
       import scala.concurrent.duration.DurationInt
 
       val result : Future[Boolean] = async {
-        val f1 : Future[Boolean] = Future.apply(true)
+        var f1 : Future[Boolean] = Future.apply(true)
         var a1 = Macros.await(f1)
         a1
+      }
+      Await.result(result, DurationInt(2).seconds) must_==(true)
+      ok
+    }
+
+    "deal with multiple futures" in {
+
+      import Macros._
+      import scala.concurrent.ExecutionContext.Implicits.global
+      import scala.concurrent.duration.DurationInt
+
+      val result : Future[Boolean] = async {
+        var f1 : Future[Boolean] = Future.apply(true)
+        var f2 : Future[Boolean] = Future.apply(false)
+        var a1 = Macros.await(f1)
+        var a2 = Macros.await(f2)
+        a1 || a2
       }
       //scala.concurrent.Await.ready[Boolean](scala.concurrent.Future.apply[Boolean](true)(scala.concurrent.ExecutionContext.global), scala.concurrent.duration.DurationInt(5).seconds)
       println(result)
