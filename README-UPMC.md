@@ -77,10 +77,9 @@ scala/async as an inspiration that would allow me to understand all the concepts
 the project could be implemented and how the scala compiler works but without an initial base
 of code. Over the development of the project I have tried to use an assemble some of the pieces
 of scala/async but due to the complexity and my lack of understanding of the scala compiler
-I have only manage to implement some of the features without a full example of the project
-that could work.
+I have managed to implement only a subset of the features.
 
-I have had the lack of being able to count on the collaboration of some of the members of
+I have had the luck of being able to count on the collaboration of some of the members of
 the mailing list scala-internals, where I created a thread that has been dedicated to answer
 all the questions that I had during the development of the project. The thread is available at:
 
