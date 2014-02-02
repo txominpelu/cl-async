@@ -1,3 +1,8 @@
+/* Copyright (c) 2013 by Inigo Mediavilla
+ * Permission is granted to use, distribute, or modify this source,
+ * provided that this copyright notice remains intact.
+ *
+*/
 package es.imediava.cl.async
 
 import org.specs2.mutable.Specification
@@ -5,6 +10,12 @@ import org.specs2.mutable.Specification
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Try}
 import scala.concurrent.{Future, Await}
+
+package es.imediava.cl.async.utils {
+  object MyUtils {
+    def myprint(s: String) = println(s)
+  }
+}
 
 class ImplSpec extends Specification {
 
@@ -26,14 +37,17 @@ class ImplSpec extends Specification {
 
 
 
+
     "deal with one future " in {
 
       import Macros._
       import scala.concurrent.ExecutionContext.Implicits.global
       import scala.concurrent.duration.DurationInt
+      import es.imediava.cl.async.utils.MyUtils._
 
       val result : Future[Boolean] = async {
         var f1 : Future[Boolean] = Future.apply(true)
+        myprint("MyTal")
         var a1 = Macros.await(f1)
         a1
       }
@@ -54,8 +68,6 @@ class ImplSpec extends Specification {
         var a2 = Macros.await(f2)
         a1 || a2
       }
-      //scala.concurrent.Await.ready[Boolean](scala.concurrent.Future.apply[Boolean](true)(scala.concurrent.ExecutionContext.global), scala.concurrent.duration.DurationInt(5).seconds)
-      println(result)
       Await.result(result, DurationInt(2).seconds) must_==(true)
       ok
     }

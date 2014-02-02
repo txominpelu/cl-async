@@ -1,19 +1,42 @@
 
-Steps in the transformation:
+# Steps in the transformation
 
-Transformation to async-specific ANF:
 
-- [ ] Calls to await function cannot have complex expressions in their parameters
+- [ ] Calls to await function cannot have complex expressions in their parameters. This should be 
+normally enforced by the macro through the conversion to a specific form of ANF that is explained in:
+
+http://docs.scala-lang.org/sips/pending/async.html
+
 - [X] Construction of the skeleton of the StateMachine class
+- [X] Separation of the code passed into the macro into the different states that will be inserted
+into the skeleton of the state machine class.
 - [X] Generate code for every state: case for handling the state on the resume$async method
- and another case for the state on the apply(result:Try[])
+ and another case for the state on the apply(result:Try[]), including the insertion of the code result
+ of the separation made on the previous step.
 - [X] Aggregation of the cases for every state into the definition of the resume$async and the
- apply(result:Try[]) methods
-- [ ] Lifting of variables and methods. The methods defined in the previous step as well as all
- the variables used inside that correspond to fields of the class need to be assigned the
- appropiate symbol and owner. This has been started but not finished since as explained later 
- one of the sentences doesn't have the right symbol/types assigned what makes the compiler throw
- an exception.
+ apply(result:Try[]) methods and assignment of the right symbols and owners to the methods and
+ its members.
+- [X] Lifting of variables. Variable used in between different states are lifted into fields of the
+ state machine class and the references that are made to them in the methods resume$async and apply
+ are transformed into references to the fields.
+- [ ] Treatment of if and match expressions. Those expressions require a different treatment because 
+ they affect the shape of the abstract statemachine. In a final version support should be added for
+ this structures but due to its complexity the project only support expressions of type await
+ what allows to generate blocks like the following:
+
+```scala
+val result : Future[Boolean] = async {
+            val f1 : Future[Boolean] = ..
+            var a1 = Macros.await(f1)
+            //........
+            val f2 : Future[Boolean] = ..
+            a2 = Macros.await(f2)
+            //........
+            a1 && a2
+
+}
+```
+ 
  
 
 # What was the project supposed to do?
@@ -133,20 +156,6 @@ class MyStateMachine extends AnyRef {
 }
 ```
 
-However there's a part when the project assigns the symbols to the following call:
-
-
-```scala
-   MyStateMachine.this.f1.onComplete[Unit]({
-      ((result: scala.util.Try[Boolean]) => MyStateMachine.this.apply(result))
-   })(MyStateMachine.this.context);
-```
-
-that is not done right, what makes the compiler run into a type error like the following:
-
-scala.reflect.internal.Types$TypeError: value <none> is not a member of es.imediava.cl.async.ImplSpec
-
-
 # How to run the project
 
 - Install sbt 0.13 as explained in:
@@ -160,4 +169,32 @@ http://www.scala-sbt.org/0.13.0/docs/Getting-Started/Setup.html
 
 # Difficulties found 
 
+- Lack of experience working with the internals of the compiler.
+
+- Lack of documentation found on the internals of the compiler. Many articles could be found but most were outdated, the main source of help has ended up being the help in the forum.
+
+- Macro API not thought for symbol manipulation / lack of support for variable capture
+
+- Unclear compiler errors. Most errors apart from trivial mistakes show a really uninformative message,
+most of the work to debug the erros was only possible through debugging of the compilation after
+macro expansion.
+
+
+# Limitations
+
+- Due to problems with managing the scope and the imports calls the application has problem dealing
+with some of the methods that are defined in the predef package and that are automatically imported. To
+ensure that calls to this methods are well handled giving the fully qualified name is a good strategy.
+
+E.g. To print something: scala.Predef.println(...) is prefered over println(...)
+
+- For simplicity in this test project only futures of Boolean types are accepted, however overcoming 
+this limitation wouldn't be too difficult converting reference to booleans into a generic type T.
+
+- No support for if/match expressions in the async blocks
+
+- No automatic conversion to ANF. The project requires that the expressions passed are already
+normalized. The project started with some work in this sense as shown but some of the first commits,
+however due to the complexity I decided to focus on having a version working with constraints on
+the code rather than having a plugin that convert to ANF but doesn't do anything else.
 
